@@ -1,0 +1,12 @@
+{
+  "name": "chanakya-ai",
+  "private": true,
+  "type": "module",
+  "description": "Chanakya AI – Director: image to professional NEET news reel. Built by ManpaTech for Your Chanakya.",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
+    "@google/genai": "^2.31.0",
+    "@netlify/blobs": "^11.1.6",
+    "openai": "^7.43.0"
+  }
+}

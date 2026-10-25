@@ -38,7 +38,9 @@ const RULES = `HOW TO EDIT
 6. Never call something "official" unless the image is clearly an official notice from an authority (set is_official_notice accordingly).
 7. show_original = true when the original image is readable enough to be worth showing for trust; false for low-quality crops.
 8. Keep every on-screen text inside the length limits — the video is 1080x1920 and must be readable on a phone.
-9. PRIVACY: never show or speak candidate names, registration/roll numbers, application numbers, phone numbers or other personal details of students. For allotment / merit lists show only ranks (AIR), scores, category, course and college; summarise (e.g. closing rank per college) instead of listing people.`;
+9. PRIVACY: never show or speak candidate names, registration/roll numbers, application numbers, phone numbers or other personal details of students. For allotment / merit lists show only ranks (AIR), scores, category, course and college; summarise instead of listing people.
+10. PARTIAL IMAGES: if a list/table is visibly cut off (more rows continue beyond the image), never claim a closing rank, last rank, total or "lowest" for the whole list — say "in this part of the list" or "first 15 allotments shown".
+11. Keep institute names as printed; if a name is too long for a table cell use a clear short form AND show the full name once elsewhere (headline subtitle, a note or the caption).`;
 
 const SYSTEM = (lessons) => `You are the senior video editor and content director at "Your Chanakya" — a NEET UG / NEET PG counselling and medical-admission guidance brand in India (presenter: "Chanakya Sir", phone 8447088008, Yourchanakya.com).
 You turn an uploaded image (notice, fee structure, seat matrix, counselling schedule, cut-off/result list, college details, poster) into the EDIT PLAN of a 30-55 second vertical news-style reel. Think like a professional editor: decide what this image really says, what the 3-5 take-aways are, and the clearest, most engaging way to show each one.

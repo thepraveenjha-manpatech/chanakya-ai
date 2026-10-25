@@ -1,8 +1,7 @@
-// POST /api/voice {text, lang} -> audio (mp3 from ElevenLabs, or wav from Gemini TTS)
-// ElevenLabs is used only if ELEVENLABS_API_KEY is set (voice Surjit, capped per call and per day).
-// Otherwise OpenAI TTS or Gemini TTS (through the Netlify AI Gateway or your GEMINI_API_KEY). If neither works the app uses music only.
+// POST /api/voice {text, lang} -> audio
+// Order: ElevenLabs (ELEVENLABS_API_KEY) -> Sarvam AI (SARVAM_API_KEY) -> Microsoft Azure (AZURE_SPEECH_KEY + AZURE_SPEECH_REGION)
+//        -> OpenAI TTS / Gemini TTS through the Netlify AI Gateway. If none works the app uses music only.
 import { GoogleGenAI } from "@google/genai";
-import OpenAI from "openai";
 import { J, checkCode, providers, scrub } from "../lib/ai.mjs";
 
 const env = (k) => (globalThis.Netlify?.env?.get(k) ?? process.env[k]) || "";
@@ -28,12 +27,43 @@ export default async (req) => {
     if (r.ok) { spent += text.length; return new Response(await r.arrayBuffer(), { headers: { "content-type": "audio/mpeg" } }); }
   }
   const P = providers(), why = [];
-  if (P.openai) {   // OpenAI TTS through the AI Gateway (mp3)
+  const hi = body.lang === "hi";
+  // Sarvam AI (Indian voices, Hindi + Indian English) – SARVAM_API_KEY
+  if (env("SARVAM_API_KEY")) {
     try {
-      const client = new OpenAI();
-      const r = await client.audio.speech.create({ model: env("OPENAI_TTS_MODEL") || "gpt-4o-mini-tts", voice: env("OPENAI_VOICE") || "onyx", input: text, response_format: "mp3", instructions: "Energetic, clear Indian TV news anchor. Brisk pace." });
-      const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > 2000) return new Response(buf, { headers: { "content-type": "audio/mpeg" } });
-    } catch (e) { why.push("openai: " + scrub(e.message)); }
+      const r = await fetch("https://api.sarvam.ai/text-to-speech", {
+        method: "POST", headers: { "api-subscription-key": env("SARVAM_API_KEY"), "content-type": "application/json" },
+        body: JSON.stringify({ text: text.slice(0, 2400), language_code: hi ? "hi-IN" : "en-IN", model: env("SARVAM_MODEL") || "bulbul:v4-flash", speaker: env("SARVAM_SPEAKER") || "shubh_enhi_ads", pace: parseFloat(env("SARVAM_PACE") || "1.1"), output_audio_codec: "mp3", speech_sample_rate: 44100 }),
+      });
+      if (r.ok) { const j = await r.json(); const b64 = (j.audios || []).join(""); if (b64) return new Response(Buffer.from(b64, "base64"), { headers: { "content-type": "audio/mpeg" } }); why.push("sarvam: no audio"); }
+      else why.push(`sarvam: ${r.status} ${scrub(await r.text()).slice(0, 140)}`);
+    } catch (e) { why.push("sarvam: " + scrub(e.message)); }
+  }
+  // Microsoft Azure Speech (free tier: 0.5 million neural characters / month) – AZURE_SPEECH_KEY + AZURE_SPEECH_REGION
+  if (env("AZURE_SPEECH_KEY")) {
+    try {
+      const region = env("AZURE_SPEECH_REGION") || "centralindia", lang = hi ? "hi-IN" : "en-IN";
+      const name = hi ? (env("AZURE_VOICE_HI") || "hi-IN-MadhurNeural") : (env("AZURE_VOICE_EN") || "en-IN-PrabhatNeural");
+      const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const ssml = `<speak version="1.0" xml:lang="${lang}"><voice name="${name}"><prosody rate="${env("AZURE_RATE") || "+10%"}">${esc(text)}</prosody></voice></speak>`;
+      const r = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
+        method: "POST", headers: { "Ocp-Apim-Subscription-Key": env("AZURE_SPEECH_KEY"), "content-type": "application/ssml+xml", "X-Microsoft-OutputFormat": "audio-24khz-96kbitrate-mono-mp3", "user-agent": "chanakya-ai" }, body: ssml,
+      });
+      if (r.ok) { const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > 1000) return new Response(buf, { headers: { "content-type": "audio/mpeg" } }); why.push("azure: empty audio"); }
+      else why.push(`azure: ${r.status} ${scrub(await r.text()).slice(0, 140)}`);
+    } catch (e) { why.push("azure: " + scrub(e.message)); }
+  }
+  if (P.openai) {   // OpenAI TTS through the AI Gateway (mp3)
+    // The gateway rejects the SDK's default "Accept: application/octet-stream" for audio, so try other Accept values.
+    const base = (env("OPENAI_BASE_URL") || "https://api.openai.com/v1").replace(/\/$/, "");
+    const body = JSON.stringify({ model: env("OPENAI_TTS_MODEL") || "gpt-4o-mini-tts", voice: env("OPENAI_VOICE") || "onyx", input: text, response_format: "mp3", instructions: "Energetic, clear Indian TV news anchor. Brisk pace." });
+    for (const accept of ["*/*", "audio/mpeg", "application/json"]) {
+      try {
+        const r = await fetch(base + "/audio/speech", { method: "POST", headers: { authorization: "Bearer " + env("OPENAI_API_KEY"), "content-type": "application/json", accept }, body });
+        if (r.ok) { const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > 2000) return new Response(buf, { headers: { "content-type": "audio/mpeg" } }); why.push("openai: empty audio"); break; }
+        const t = scrub(await r.text()); why.push(`openai(${accept}): ${r.status} ${t.slice(0, 120)}`); if (!/accept/i.test(t)) break;
+      } catch (e) { why.push("openai: " + scrub(e.message)); break; }
+    }
   }
   if (!P.gemini) return J({ error: "voice not available", detail: why.join(" | ") || "no voice provider" }, 501);
   try {

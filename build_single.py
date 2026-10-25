@@ -11,6 +11,7 @@ html = re.sub(r'<link rel="(manifest|icon|apple-touch-icon)"[^>]*>', '', html)
 html = html.replace('src="assets/logo.png"', 'src="%s"' % b64("assets/logo.png"))
 emb = {p: b64(p) for p in ["assets/logo.png", "assets/avatar.jpg"] + ["voice/%s.mp3" % n for n in ("hook_en", "hook_hi", "cta_en", "cta_hi")]}
 js = "window.API_BASE=%s;window.EMBED=%s;\n%s" % (json.dumps(api), json.dumps(emb), (R / "app.js").read_text())
+html = html.replace('<script src="lib/mp4-muxer.js"></script>', "<script>%s</script>" % (R / "lib/mp4-muxer.js").read_text().replace("</script>", "<\\/script>"))
 html = html.replace('<script src="app.js"></script>', "<script>%s</script>" % js.replace("</script>", "<\\/script>"))
 out = R / "dist" / ("Chanakya_AI_Director.html"); out.parent.mkdir(exist_ok=True); out.write_text(html)
 print(out, round(out.stat().st_size / 1e6, 2), "MB")

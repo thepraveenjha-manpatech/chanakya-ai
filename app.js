@@ -29,7 +29,7 @@ $("file").onchange = async (e) => {
   $("dropTxt").innerHTML = ""; const p = new Image(); p.src = imgData; $("dropTxt").appendChild(p); $("drop").classList.add("has");
   $("go").disabled = false; $("out").hidden = true; $("prog").hidden = true;
 };
-const STEPS = ["Studying the image like an editor", "Planning scenes & script", "Quality check – verifying every value", "Creating voice", "Recording the reel", "Ready"];
+const STEPS = ["Studying the image like an editor", "Planning scenes & script", "Quality check – verifying every value", "Creating voice", "Rendering the reel", "Ready"];
 function showSteps() { $("prog").hidden = false; $("steps").innerHTML = STEPS.map((s) => `<li><span>○</span><em style="font-style:normal">${s}</em></li>`).join(""); $("msg").textContent = ""; $("notes").style.display = "none"; $("notesList").innerHTML = ""; setBar(0); }
 function step(i, st, note) { const li = $("steps").children[i]; if (!li) return; li.className = st; li.firstChild.textContent = { done: "✔", err: "✖", on: "●", skip: "–" }[st] || "○"; if (note) li.lastChild.textContent = STEPS[i] + " – " + note; }
 function setBar(p) { $("bar").firstElementChild.style.width = Math.round(p * 100) + "%"; }
@@ -328,7 +328,7 @@ function critic(P) {
 }
 
 /* ---------------- audio ---------------- */
-let AC = null;
+let AC = null, voiceErr = "";
 const actx = () => (AC = AC || new (window.AudioContext || window.webkitAudioContext)());
 async function decode(buf) { return await actx().decodeAudioData(buf.slice(0)); }
 async function loadStored(name) { try { const r = await fetch((window.EMBED && EMBED["voice/" + name + ".mp3"]) || "voice/" + name + ".mp3"); return await decode(await r.arrayBuffer()); } catch { return null; } }
@@ -336,8 +336,9 @@ async function fetchVoice(text, lang) {
   if (!$("vo").checked || !server.ok || !text || text.length < 5) return null;
   try {
     const r = await fetch(API() + "/api/voice", { method: "POST", headers: HDR(), body: JSON.stringify({ text, lang }) });
-    if (!r.ok) return null; const b = await decode(await r.arrayBuffer()); return b.duration > 0.6 ? b : null;
-  } catch { return null; }
+    if (!r.ok) { try { const j = await r.json(); voiceErr = j.detail || j.error || String(r.status); } catch { voiceErr = String(r.status); } return null; }
+    const b = await decode(await r.arrayBuffer()); return b.duration > 0.6 ? b : null;
+  } catch (e) { voiceErr = String(e.message || e); return null; }
 }
 function envelope(buf, startT, env) {
   const d = buf.getChannelData(0), hop = Math.floor(buf.sampleRate / FPS), n = Math.floor(d.length / hop), rms = new Float32Array(n);
@@ -645,6 +646,42 @@ function drawFrame(t, TL, P, envArr) {
   drawChrome(t, TL.total);
 }
 
+/* ---------------- rendering: frame-perfect (WebCodecs) with live-recording fallback ---------------- */
+// Every frame is drawn at its exact time and encoded, so the video never freezes or skips –
+// even if the phone screen dims or the user switches tabs – and it is usually faster than real time.
+async function wcRecord(TL, P, envArr, audioBuf) {
+  if (!window.VideoEncoder || !window.AudioEncoder || !window.Mp4Muxer || !window.VideoFrame) return null;
+  const w = cv.width, h = cv.height, fps = FPS, test = !!window.__WC_TEST;
+  const vopts = [["avc1.640028", "avc"], ["avc1.4d0028", "avc"], ["avc1.42003e", "avc"]].concat(test ? [["vp09.00.10.08", "vp9"]] : []);
+  const aopts = [["mp4a.40.2", "aac"]].concat(test ? [["opus", "opus"]] : []);
+  let vc = null, ac = null;
+  for (const [codec, mux] of vopts) { const c = { codec, width: w, height: h, bitrate: 8_000_000, framerate: fps }; if (mux === "avc") c.avc = { format: "avc" }; try { if ((await VideoEncoder.isConfigSupported(c)).supported) { vc = { c, mux }; break; } } catch {} }
+  const SR = audioBuf.sampleRate;
+  for (const [codec, mux] of aopts) { const c = { codec, sampleRate: mux === "opus" ? 48000 : SR, numberOfChannels: 2, bitrate: 160000 }; try { if ((await AudioEncoder.isConfigSupported(c)).supported) { ac = { c, mux }; break; } } catch {} }
+  if (!vc || !ac) return null;
+  if (ac.c.sampleRate !== SR) { // resample (only needed for opus in tests)
+    const oc = new OfflineAudioContext(2, Math.ceil(audioBuf.duration * ac.c.sampleRate), ac.c.sampleRate); const s0 = oc.createBufferSource(); s0.buffer = audioBuf; s0.connect(oc.destination); s0.start(); audioBuf = await oc.startRendering();
+  }
+  const sr = audioBuf.sampleRate;
+  const muxer = new Mp4Muxer.Muxer({ target: new Mp4Muxer.ArrayBufferTarget(), video: { codec: vc.mux, width: w, height: h, frameRate: fps }, audio: { codec: ac.mux, numberOfChannels: 2, sampleRate: sr }, fastStart: "in-memory", firstTimestampBehavior: "offset" });
+  let err = null;
+  const ve = new VideoEncoder({ output: (c, m) => muxer.addVideoChunk(c, m), error: (e) => (err = e) }); ve.configure(vc.c);
+  const ae = new AudioEncoder({ output: (c, m) => muxer.addAudioChunk(c, m), error: (e) => (err = e) }); ae.configure(ac.c);
+  const L = audioBuf.getChannelData(0), R = audioBuf.numberOfChannels > 1 ? audioBuf.getChannelData(1) : L, total = Math.min(L.length, Math.ceil(TL.total * sr));
+  for (let i = 0; i < total; i += 4096) { const n = Math.min(4096, total - i), d = new Float32Array(n * 2); d.set(L.subarray(i, i + n), 0); d.set(R.subarray(i, i + n), n); ae.encode(new AudioData({ format: "f32-planar", sampleRate: sr, numberOfFrames: n, numberOfChannels: 2, timestamp: Math.round(i / sr * 1e6), data: d })); }
+  const N = Math.ceil(TL.total * fps);
+  for (let f = 0; f < N; f++) {
+    if (err) throw err;
+    const t = f / fps; drawFrame(Math.min(t, TL.total - 0.001), TL, P, envArr);
+    const vf = new VideoFrame(cv, { timestamp: Math.round(t * 1e6), duration: Math.round(1e6 / fps) });
+    ve.encode(vf, { keyFrame: f % (fps * 2) === 0 }); vf.close();
+    if (ve.encodeQueueSize > 6) await new Promise((r) => { const chk = () => (ve.encodeQueueSize > 2 ? setTimeout(chk, 2) : r()); chk(); });
+    if (f % 10 === 0) { setBar(0.3 + 0.7 * f / N); await new Promise((r) => setTimeout(r, 0)); }
+  }
+  await ve.flush(); await ae.flush(); if (err) throw err; muxer.finalize();
+  return new Blob([muxer.target.buffer], { type: "video/mp4" });
+}
+
 /* ---------------- recording ---------------- */
 function pickMime() { for (const m of ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]) if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m; return ""; }
 async function record(TL, P, envArr, audioBuf) {
@@ -690,14 +727,18 @@ async function run() {
     const voices = await Promise.all(lines.map((t) => fetchVoice(t, lang)));
     const nv = voices.filter(Boolean).length;
     const [cta, hook] = await Promise.all([loadStored("cta_" + lang), /neet/i.test(P.series + " " + P.headline.title) ? loadStored("hook_" + lang) : Promise.resolve(null)]);
-    step(3, nv ? "done" : "skip", nv ? `${nv} voice lines` : "no AI voice – music + end voice"); setBar(0.24);
+    step(3, nv ? "done" : "skip", nv ? `${nv} voice lines` : "no AI voice – music + end voice" + (voiceErr ? " (" + String(voiceErr).slice(0, 90) + ")" : "")); voiceErr = ""; setBar(0.24);
     await document.fonts.ready; await Promise.all(["900 40px Inter", "800 40px Inter", "700 40px Inter", "900 40px NotoDev", "700 40px NotoDev"].map((f) => document.fonts.load(f, "अआ Aa").catch(() => {})));
     IMG.logo = IMG.logo || await loadImg((window.EMBED && EMBED["assets/logo.png"]) || "assets/logo.png"); IMG.avatar = IMG.avatar || await loadImg((window.EMBED && EMBED["assets/avatar.jpg"]) || "assets/avatar.jpg");
     bgC = mkBg(); chromeC = mkChrome(P);
     const TL = buildTimeline(P, voices, hook, cta);
     const envArr = new Float32Array(Math.ceil(TL.total * FPS) + 5); TL.place.forEach((p) => envelope(p.buf, p.t, envArr));
     const audioBuf = await mixAudio(TL.total, TL.place, envArr, TL.sfx); setBar(0.3);
-    step(4, "on"); const blob = await record(TL, P, envArr, audioBuf); step(4, "done", Math.round(TL.total) + " s");
+    step(4, "on");
+    let blob = null, how = "frame-perfect";
+    try { blob = await wcRecord(TL, P, envArr, audioBuf); } catch (e) { console.warn("frame-perfect render failed, using live recording", e); blob = null; }
+    if (!blob) { how = "live recording – keep this screen open"; $("msg").textContent = "Recording live – keep this screen open and don't switch apps."; blob = await record(TL, P, envArr, audioBuf); $("msg").textContent = ""; }
+    step(4, "done", Math.round(TL.total) + " s · " + how);
     outBlob = blob; const ext = blob.type.includes("mp4") ? "mp4" : "webm"; outName = "YourChanakya_" + (P.headline.title || "Reel").replace(/[^\wऀ-ॿ]+/g, "_").slice(0, 40) + "." + ext;
     $("vid").src = URL.createObjectURL(blob); $("out").hidden = false; step(5, "done"); setBar(1);
     $("cap").value = (P.caption || P.headline.title) + `\n\nFollow Your Chanakya for every notification & update.\n📞 ${BRAND.phone} | ${BRAND.site}\n\n${P.hashtags || "#YourChanakya #NEET"}`;

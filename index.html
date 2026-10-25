@@ -65,7 +65,7 @@ input[type=text]{width:100%;padding:10px;border-radius:10px;border:0;font:inheri
 <div class="card" id="prog" hidden>
   <ul id="steps"></ul><div id="bar"><i></i></div><div id="msg"></div>
   <div id="notes"><b>🎬 Editor's notes</b><ul id="notesList"></ul></div>
-  <div class="small" style="margin-top:8px">Keep this screen open while the video is being recorded.</div>
+  <div class="small" style="margin-top:8px">Keep this screen open until the video is ready.</div>
 </div>
 
 <div class="card" id="out" hidden>
@@ -82,5 +82,6 @@ input[type=text]{width:100%;padding:10px;border-radius:10px;border:0;font:inheri
 <div class="small" style="text-align:center">Values are shown as printed on the uploaded image. Always verify on the official website.</div>
 <canvas id="cv" width="1080" height="1920"></canvas>
 </div>
+<script src="lib/mp4-muxer.js"></script>
 <script src="app.js"></script>
 </body></html>

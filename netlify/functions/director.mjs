@@ -37,7 +37,8 @@ const RULES = `HOW TO EDIT
 5. NARRATION ("say"): natural spoken news-anchor style for Indian NEET aspirants, in the language of the image (English or Hindi). 8-30 words per scene, total of all "say" + "hook_say" <= 120 words. Speak amounts naturally ("32 lakh 55 thousand rupees per year") but they must equal the printed values.
 6. Never call something "official" unless the image is clearly an official notice from an authority (set is_official_notice accordingly).
 7. show_original = true when the original image is readable enough to be worth showing for trust; false for low-quality crops.
-8. Keep every on-screen text inside the length limits — the video is 1080x1920 and must be readable on a phone.`;
+8. Keep every on-screen text inside the length limits — the video is 1080x1920 and must be readable on a phone.
+9. PRIVACY: never show or speak candidate names, registration/roll numbers, application numbers, phone numbers or other personal details of students. For allotment / merit lists show only ranks (AIR), scores, category, course and college; summarise (e.g. closing rank per college) instead of listing people.`;
 
 const SYSTEM = (lessons) => `You are the senior video editor and content director at "Your Chanakya" — a NEET UG / NEET PG counselling and medical-admission guidance brand in India (presenter: "Chanakya Sir", phone 8447088008, Yourchanakya.com).
 You turn an uploaded image (notice, fee structure, seat matrix, counselling schedule, cut-off/result list, college details, poster) into the EDIT PLAN of a 30-55 second vertical news-style reel. Think like a professional editor: decide what this image really says, what the 3-5 take-aways are, and the clearest, most engaging way to show each one.

@@ -1,7 +1,8 @@
 // POST /api/voice {text, lang} -> audio (mp3 from ElevenLabs, or wav from Gemini TTS)
 // ElevenLabs is used only if ELEVENLABS_API_KEY is set (voice Surjit, capped per call and per day).
-// Otherwise Gemini TTS (through the Netlify AI Gateway or your GEMINI_API_KEY). If neither works the app uses music only.
+// Otherwise OpenAI TTS or Gemini TTS (through the Netlify AI Gateway or your GEMINI_API_KEY). If neither works the app uses music only.
 import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 import { J, checkCode, providers, scrub } from "../lib/ai.mjs";
 
 const env = (k) => (globalThis.Netlify?.env?.get(k) ?? process.env[k]) || "";
@@ -25,9 +26,16 @@ export default async (req) => {
       body: JSON.stringify({ text, model_id: env("ELEVEN_MODEL") || "eleven_v4", voice_settings: { speed: 1.12, stability: 0.5, similarity_boost: 0.8 } }),
     });
     if (r.ok) { spent += text.length; return new Response(await r.arrayBuffer(), { headers: { "content-type": "audio/mpeg" } }); }
-    if (!providers().gemini) return J({ error: "voice failed", status: r.status }, 502);
   }
-  if (!providers().gemini) return J({ error: "voice not configured" }, 501);
+  const P = providers(), why = [];
+  if (P.openai) {   // OpenAI TTS through the AI Gateway (mp3)
+    try {
+      const client = new OpenAI();
+      const r = await client.audio.speech.create({ model: env("OPENAI_TTS_MODEL") || "gpt-4o-mini-tts", voice: env("OPENAI_VOICE") || "onyx", input: text, response_format: "mp3", instructions: "Energetic, clear Indian TV news anchor. Brisk pace." });
+      const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > 2000) return new Response(buf, { headers: { "content-type": "audio/mpeg" } });
+    } catch (e) { why.push("openai: " + scrub(e.message)); }
+  }
+  if (!P.gemini) return J({ error: "voice not available", detail: why.join(" | ") || "no voice provider" }, 501);
   try {
     const ai = new GoogleGenAI({});
     const r = await ai.models.generateContent({
@@ -41,7 +49,7 @@ export default async (req) => {
     h.write("RIFF", 0); h.writeUInt32LE(36 + pcm.length, 4); h.write("WAVEfmt ", 8); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
     h.writeUInt32LE(sr, 24); h.writeUInt32LE(sr * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34); h.write("data", 36); h.writeUInt32LE(pcm.length, 40);
     return new Response(Buffer.concat([h, pcm]), { headers: { "content-type": "audio/wav" } });
-  } catch (e) { return J({ error: "voice failed", detail: scrub(e.message) }, 502); }
+  } catch (e) { why.push("gemini: " + scrub(e.message)); return J({ error: "voice failed", detail: why.join(" | ") }, 502); }
 };
 
 export const config = { path: "/api/voice" };
